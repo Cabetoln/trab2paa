@@ -1,0 +1,61 @@
+Coloração Seletiva de Grafos (SGCP) - algoritmo exato (branch and bound)
+Data: 2026-11-17 14:21:03
+
+Instância: n60p5t2s1 (instancias\random\n60p5t2s1.txt)
+n = 60 vértices, m = 909 arestas, k = 30 grupos, densidade = 0.5136
+Estratégia: hibrida; limite de tempo: 5 s
+
+Método                       Cores    Tempo (ms)  Validação
+Heurística (Trabalho 1)          9         0.192  válida
+Branch and bound                 5       567.567  válida
+
+Branch and bound:
+  ótimo provado: sim
+  limite inferior final: 5   limite superior final: 5
+  limite inferior na raiz: 3 (clique de grupos = 3, cobertura por cliques = 3)
+  UB inicial: guloso = 9, após guloso iterado = 6
+  vértices removidos por dominância: 0
+  nós explorados: 5903
+  gap da heurística para o ótimo: 4 cor(es)
+
+Melhor solução (branch and bound)
+Valor (número de cores = trabalhadores): 5
+
+ Grupo  Representante   Cor
+     1             15     4
+     2             51     5
+     3             30     1
+     4             33     2
+     5             56     2
+     6             31     5
+     7             36     5
+     8             12     1
+     9             48     1
+    10              7     5
+    11             49     1
+    12             47     4
+    13             29     3
+    14             28     1
+    15             13     4
+    16             20     3
+    17             55     4
+    18             59     5
+    19             16     1
+    20             57     5
+    21             42     4
+    22             24     2
+    23             60     4
+    24             44     2
+    25             32     2
+    26             17     2
+    27             22     3
+    28             34     3
+    29              8     1
+    30             27     3
+
+Tarefas (vértices) de cada trabalhador (cor):
+  Trabalhador 1 (7 tarefas): 30, 12, 48, 49, 28, 16, 8
+  Trabalhador 2 (6 tarefas): 33, 56, 24, 44, 32, 17
+  Trabalhador 3 (5 tarefas): 29, 20, 22, 34, 27
+  Trabalhador 4 (6 tarefas): 15, 47, 13, 55, 42, 60
+  Trabalhador 5 (6 tarefas): 51, 31, 36, 7, 59, 57
