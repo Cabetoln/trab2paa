@@ -1,0 +1,905 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+\usepackage{graphicx,url}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tikz}
+\usetikzlibrary{fit}
+
+\sloppy
+
+% pseudocódigo em português
+\floatname{algorithm}{Algoritmo}
+\algrenewcommand\algorithmicrequire{\textbf{Entrada:}}
+\algrenewcommand\algorithmicensure{\textbf{Saída:}}
+\algrenewcommand\algorithmicwhile{\textbf{enquanto}}
+\algrenewcommand\algorithmicdo{\textbf{faça}}
+\algrenewcommand\algorithmicfor{\textbf{para}}
+\algrenewcommand\algorithmicforall{\textbf{para cada}}
+\algrenewcommand\algorithmicif{\textbf{se}}
+\algrenewcommand\algorithmicthen{\textbf{então}}
+\algrenewcommand\algorithmicelse{\textbf{senão}}
+\algrenewcommand\algorithmicend{\textbf{fim}}
+\algrenewcommand\algorithmicreturn{\textbf{devolva}}
+\algrenewcommand\algorithmicfunction{\textbf{função}}
+\algrenewcommand\algorithmicprocedure{\textbf{procedimento}}
+
+\newtheorem{teorema}{Teorema}
+\newtheorem{lema}{Lema}
+\newtheorem{corolario}{Corolário}
+
+\newcommand{\chiP}{\chi_P}
+\newcommand{\LB}{\mathit{LB}}
+\newcommand{\UB}{\mathit{UB}}
+
+\title{Um Algoritmo \emph{Branch and Bound} para o\\
+  Problema de Coloração Seletiva de Grafos}
+
+\author{Carlos Alberto de Lima Neto, Guilherme Augusto Pondofe Santana}
+
+\address{Departamento de Informática e Matemática Aplicada (DIMAp)\\
+  Universidade Federal do Rio Grande do Norte (UFRN) -- Natal -- RN -- Brasil
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{resumo}
+  No Problema de Coloração Seletiva de Grafos, os vértices de um grafo estão
+  divididos em $k$ grupos, e é preciso escolher exatamente um vértice de cada
+  grupo e colorir os escolhidos com o menor número de cores. O problema é
+  NP-difícil. Apresentamos um algoritmo exato do tipo \emph{branch and bound}
+  com ramificação no estilo DSATUR, redução por dominância, limites inferiores
+  por cliques e limite superior inicial dado pela heurística gulosa do nosso
+  primeiro trabalho, melhorada por um guloso iterado. Provamos a correção do
+  algoritmo, analisamos a sua complexidade e o aplicamos às 280 instâncias
+  clássicas da literatura, com 60~s por instância. Ele provou o ótimo em 127
+  instâncias e chegou ao valor de referência em 132 das 187 que têm
+  referência. Em relação à heurística do primeiro trabalho, o gap médio caiu
+  de 19\% e 43\% para no máximo 2,4\%. Somando os ótimos provados aos da
+  literatura, a heurística sozinha atinge o ótimo em só 16 de 246 instâncias.
+\end{resumo}
+
+% ---------------------------------------------------------------------------
+\section{Introdução}
+
+Problemas de coloração de grafos modelam situações em que recursos precisam
+ser atribuídos a elementos que entram em conflito. Na coloração seletiva, além
+de colorir, é preciso escolher \emph{quais} elementos serão coloridos: os
+vértices estão organizados em grupos e apenas um vértice de cada grupo entra na
+solução. O problema foi proposto por \cite{li2000}, com o nome de
+\emph{Partition Coloring Problem} (PCP), para modelar o roteamento e a
+atribuição de comprimentos de onda em redes ópticas: cada grupo reúne as rotas
+possíveis de uma conexão, duas rotas que compartilham um enlace são adjacentes
+e cada cor é um comprimento de onda. Outras aplicações, como problemas de
+escalonamento e de alocação, são discutidas por \cite{demange2015}.
+
+Uma forma de ver o problema é a seguinte. Há tarefas divididas em categorias, e
+de cada categoria basta executar uma tarefa. Duas tarefas são incompatíveis
+quando acontecem no mesmo horário. Cada trabalhador executa um conjunto de
+tarefas compatíveis entre si. Queremos escolher uma tarefa de cada categoria e
+contratar o menor número de trabalhadores capaz de executá-las.
+
+No primeiro trabalho, implementamos uma heurística gulosa que monta uma classe
+de cor por vez. Ela é muito rápida, mas fica, em média, de 19\% a 43\% acima
+dos valores ótimos publicados. Este trabalho apresenta um algoritmo
+\emph{exato} para o problema, do tipo \emph{branch and bound}, e o compara com
+essa heurística. As contribuições são: (i) um resumo do estado da arte em
+algoritmos exatos para o PCP; (ii) um \emph{branch and bound} com ramificação
+no estilo DSATUR, redução por dominância, dois limites inferiores, quebra de
+simetria e limite superior inicial dado pela heurística do primeiro trabalho;
+(iii) a prova de correção e a análise de complexidade do algoritmo; e (iv) a
+aplicação do algoritmo às 280 instâncias clássicas da literatura, com
+comparação à heurística do primeiro trabalho e aos valores ótimos publicados.
+
+O restante do texto está organizado assim. A Seção~\ref{sec:problema} define o
+problema e a Seção~\ref{sec:complexidade} discute a sua complexidade. A
+Seção~\ref{sec:literatura} resume os algoritmos exatos já publicados e a
+Seção~\ref{sec:tecnica} apresenta a técnica escolhida. A
+Seção~\ref{sec:algoritmo} descreve o algoritmo implementado, cuja correção é
+provada na Seção~\ref{sec:correcao} e cuja complexidade é analisada na
+Seção~\ref{sec:analise}. A Seção~\ref{sec:experimentos} traz os experimentos e
+a Seção~\ref{sec:conclusao} conclui o trabalho.
+
+% ---------------------------------------------------------------------------
+\section{Descrição do problema}\label{sec:problema}
+
+Seja $G=(V,E)$ um grafo simples com $n=|V|$ vértices e $m=|E|$ arestas, e seja
+$\mathcal{P}=\{V_1,\dots,V_k\}$ uma partição de $V$ em $k$ grupos não vazios.
+Uma \emph{seleção} é um conjunto $S\subseteq V$ com $|S\cap V_i|=1$ para todo
+$i$, isto é, um representante por grupo. Uma \emph{coloração própria} de $S$ é
+uma função $f:S\to\{1,\dots,c\}$ tal que $f(u)\neq f(v)$ para toda aresta
+$uv\in E$ com $u,v\in S$. O problema consiste em encontrar uma seleção $S$ e
+uma coloração própria de $G[S]$ com o menor número possível de cores. Esse
+mínimo é o \emph{número cromático de partição} de $G$, denotado por $\chiP(G)$:
+\[
+  \chiP(G)=\min\{\chi(G[S]) : S \text{ é uma seleção}\},
+\]
+onde $\chi$ é o número cromático usual. Arestas entre vértices de um mesmo grupo
+nunca aparecem em $G[S]$ e podem ser ignoradas. Para um vértice $v\in V_i$,
+escrevemos $N'(v)=N(v)\setminus V_i$ para o conjunto de vizinhos de $v$ fora
+do seu grupo e $d_i(v)=|N'(v)|$. Também usamos $s=\max_i|V_i|$ para o tamanho
+do maior grupo.
+
+A Figura~\ref{fig:toy} mostra a instância de exemplo usada nos testes do
+projeto. Os vértices ímpares formam um $K_4$, de modo que escolher o primeiro
+vértice de cada grupo exige quatro cores. Escolhendo os vértices
+$\{2,3,6,8\}$, duas cores bastam, e esse é o ótimo, pois nenhuma seleção é um
+conjunto independente.
+
+\begin{figure}[ht]
+  \centering
+  \begin{tikzpicture}[
+      v/.style={circle,draw,minimum size=7mm,inner sep=0pt,font=\small},
+      c1/.style={v,fill=black!20},
+      c2/.style={v,fill=black,text=white},
+      g/.style={draw,dashed,rounded corners,inner sep=2pt}]
+    \node[v]  (1) at (0,1.6) {1};  \node[c1] (2) at (0,0) {2};
+    \node[c1] (3) at (2.4,1.6) {3}; \node[v]  (4) at (2.4,0) {4};
+    \node[v]  (5) at (4.8,1.6) {5}; \node[c1] (6) at (4.8,0) {6};
+    \node[v]  (7) at (7.2,1.6) {7}; \node[c2] (8) at (7.2,0) {8};
+    \foreach \a/\b in {1/3,3/5,5/7,2/4,6/8,2/5,4/7,1/6,3/8}
+      \draw (\a) -- (\b);
+    \draw (1) to[bend left=30] (5);
+    \draw (3) to[bend left=30] (7);
+    \draw (1) to[bend left=40] (7);
+    \foreach \a/\b/\i in {1/2/1,3/4/2,5/6/3,7/8/4}
+      \node[g,fit=(\a)(\b),label=below:{$V_\i$}] {};
+  \end{tikzpicture}
+  \caption{Instância de exemplo com $n=8$, $m=12$ e $k=4$. Os vértices
+    preenchidos formam uma solução ótima: 2, 3 e 6 com a cor 1 (cinza) e 8 com
+    a cor 2 (preto).}
+  \label{fig:toy}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\section{Complexidade do problema}\label{sec:complexidade}
+
+A versão de decisão do problema (``existe seleção colorível com no máximo $c$
+cores?'') pertence a NP: uma seleção e uma coloração formam um certificado
+verificável em tempo $O(n+m)$. O problema é NP-difícil porque contém a coloração
+de vértices como caso particular: quando todo grupo tem um único vértice, a
+única seleção é $S=V$ e $\chiP(G)=\chi(G)$. Como decidir se $\chi(G)\le 3$ é
+NP-completo \cite{karp1972,garey1979}, decidir se $\chiP(G)\le 3$ também é
+\cite{li2000}. A coloração seletiva continua NP-difícil mesmo em classes de
+grafos nas quais a coloração usual é fácil, conforme mostrado por
+\cite{demange2014}.
+
+A mesma redução vale para a aproximação. \cite{zuckerman2007} mostrou que, para
+todo $\varepsilon>0$, não existe algoritmo polinomial que aproxime $\chi(G)$
+dentro de um fator $n^{1-\varepsilon}$, a menos que P${}={}$NP. Na redução
+acima, $k=n$, de modo que o PCP também não admite aproximação dentro de
+$k^{1-\varepsilon}$ sob a mesma hipótese.
+
+Assim, a menos que P${}={}$NP, nenhum algoritmo exato roda em tempo polinomial
+no pior caso. O espaço de busca de um método ingênuo é grande: há
+$\prod_{i=1}^{k}|V_i|$ seleções (até $2^k$ nas instâncias usadas, com grupos de
+dois vértices) e, para cada uma, até $c^k$ funções de cor com $c$ cores. Uma
+força bruta que enumera seleções e, para cada uma, testa
+$c=1,2,\dots$ cores custa $O\big(\prod_i|V_i|\cdot k^{k}\cdot k^2\big)$ no pior
+caso, inviável já para $k\approx 15$. Os algoritmos exatos práticos evitam
+essa enumeração com limites e regras de poda, como descrito a seguir.
+
+% ---------------------------------------------------------------------------
+\section{Estado da arte em algoritmos exatos}\label{sec:literatura}
+
+Os algoritmos exatos para o PCP derivam dos algoritmos exatos para a coloração
+de vértices, e se dividem em duas famílias: os baseados em programação linear
+inteira e os de enumeração implícita combinatória.
+
+\paragraph{Formulação por representantes e \emph{branch-and-cut}.}
+\cite{frota2010} adaptaram ao PCP a formulação por representantes da coloração
+de vértices \cite{campelo2008}, na qual cada classe de cor é identificada por
+um de seus vértices, o que elimina a simetria entre cores. Os autores
+estudaram desigualdades válidas para o politopo dessa formulação e as usaram
+em um algoritmo \emph{branch-and-cut}. Foi esse trabalho que introduziu os
+conjuntos de instâncias random e ring usados até hoje.
+
+\paragraph{Formulação de cobertura e \emph{branch-and-price}.} Na coloração
+de vértices, a formulação de cobertura por conjuntos independentes, resolvida
+por geração de colunas \cite{mehrotra1996}, fornece limites inferiores muito
+fortes. \cite{hoshino2011} aplicaram ao PCP a decomposição de Dantzig-Wolfe da
+formulação por representantes, obtendo um \emph{branch-and-price} em que cada
+coluna é um conjunto independente que contém no máximo um vértice de cada
+grupo. \cite{furini2018} propuseram um novo \emph{branch-and-price}, com
+subproblema de conjunto independente de peso máximo, novas regras de
+ramificação e uma busca adaptativa em vizinhança grande (ALNS) para gerar boas
+soluções iniciais. Esse algoritmo resolveu pela primeira vez várias instâncias
+em aberto e é o estado da arte nos conjuntos clássicos; os valores ótimos que
+ele publica são a principal referência dos nossos experimentos.
+
+\paragraph{Planos de corte em classes especiais.} \cite{seker2021}
+propuseram um algoritmo exato de planos de corte para o caso em que o grafo é
+perfeito, explorando o fato de que, nesse caso, o número cromático de cada
+seleção é igual ao tamanho da sua maior clique. Eles também propuseram um
+gerador de instâncias desse tipo.
+
+\paragraph{\emph{Branch and bound} combinatório.} Para a coloração de
+vértices, a principal alternativa à programação inteira são os algoritmos de
+enumeração implícita derivados do DSATUR de \cite{brelaz1979}: a cada nó, o
+vértice ainda sem cor com mais cores distintas na vizinhança recebe, em ramos
+separados, cada cor viável ou uma cor nova. \cite{sewell1996} melhorou a regra
+de desempate dessa escolha, e \cite{sansegundo2012} acrescentou limites
+inferiores por cliques e outras melhorias, obtendo um dos algoritmos
+combinatórios mais rápidos para a coloração exata. Como não dependem de
+um resolvedor de programação linear, esses algoritmos podem ser implementados
+em Python puro, como exige este trabalho. O algoritmo da
+Seção~\ref{sec:algoritmo} adapta essa família ao PCP.
+
+% ---------------------------------------------------------------------------
+\section{Técnica escolhida: \emph{branch and bound}}\label{sec:tecnica}
+
+O \emph{branch and bound} \cite{landdoig1960} resolve um problema de
+otimização combinatória explorando uma árvore de subproblemas. Em cada nó, o
+conjunto de soluções é dividido entre os filhos (a \emph{ramificação}), de
+modo que toda solução do nó esteja em algum filho. O algoritmo guarda a melhor
+solução já encontrada, chamada incumbente, cujo valor é o limite superior
+$\UB$. Para cada nó, calcula-se um limite inferior $\LB$, um valor abaixo do
+qual nenhuma solução do nó pode ficar. Em um problema de minimização, o nó é
+podado quando o seu limite inferior é pelo menos $\UB$, pois ele não contém
+solução melhor que a incumbente, ou quando não contém solução viável. Ao fim
+da exploração, a incumbente é ótima: toda solução foi encontrada ou
+descartada por um limite. Se a busca for interrompida antes,
+o algoritmo ainda devolve uma solução viável ($\UB$) e o maior limite
+inferior provado ($\LB$), e o valor ótimo fica no intervalo $[\LB,\UB]$.
+
+A heurística do primeiro trabalho entra como limite superior inicial. Nas
+instâncias de redes ópticas, há limites inferiores fáceis de calcular que
+muitas vezes coincidem com o ótimo, e quando $\LB=\UB$ já na raiz nenhum nó
+precisa ser explorado. A ramificação no estilo DSATUR fixa primeiro os grupos
+mais restritos, de modo que a poda por inviabilidade age perto da raiz.
+
+% ---------------------------------------------------------------------------
+\section{Algoritmo implementado}\label{sec:algoritmo}
+
+O algoritmo tem quatro etapas: redução por dominância, cálculo dos limites
+inferiores na raiz, construção do limite superior inicial e busca em
+profundidade. As subseções abaixo descrevem cada etapa, e o
+Algoritmo~\ref{alg:bb} resume a busca.
+
+\subsection{Redução por dominância}
+
+Dizemos que $u$ \emph{domina} $v$ quando $u$ e $v$ estão no mesmo grupo e
+$N'(u)\subseteq N'(v)$; se $N'(u)=N'(v)$, só o de menor índice domina o outro.
+Um vértice dominado pode ser removido: trocar $v$ por $u$ em qualquer solução
+não cria conflito (Lema~\ref{lem:dominancia}). Depois de remover os vértices
+dominados de todos os grupos, as arestas que chegam a eles também deixam de
+importar, o que pode criar novas dominâncias; por isso o processo é repetido
+até não haver mudança. Nas instâncias nsfnet, por exemplo, uma rota cujos
+enlaces estão todos contidos nos de outra rota da mesma conexão é removida.
+
+\subsection{Limites inferiores na raiz}
+
+\paragraph{Clique de grupos.} Seja $H$ o grafo cujos vértices são os grupos,
+com $V_i$ e $V_j$ adjacentes em $H$ quando \emph{todo} vértice de $V_i$ é
+adjacente a \emph{todo} vértice de $V_j$. Em qualquer seleção, os
+representantes de dois grupos adjacentes em $H$ são vizinhos em $G$; logo, os
+grupos de uma clique de $H$ precisam de cores distintas, e o tamanho $q$ de
+uma clique de $H$ é um limite inferior. A clique é buscada por um
+\emph{branch and bound} simples, limitado a $2\cdot 10^5$ nós; se o limite for
+atingido, usamos a maior clique encontrada, que continua sendo um limite
+válido. A clique também é usada na quebra de simetria
+(Seção~\ref{sec:ramificacao}).
+
+\paragraph{Cobertura por cliques.} Seja $\mathcal{F}=\{Q_1,\dots,Q_t\}$ uma
+família de cliques de $G$ e $w(v)$ o número de cliques de $\mathcal{F}$ que
+contêm $v$. Defina
+\[
+  W=\sum_{i=1}^{k}\ \min_{v\in V_i} w(v).
+\]
+Então $\chiP(G)\ge\lceil W/t\rceil$ (Lema~\ref{lem:cobertura}). Nas
+instâncias de redes ópticas, cada enlace da rede induz uma clique (todas as
+rotas que passam por ele), $w(v)$ é o comprimento da rota $v$ e o limite é o
+clássico limite de carga: o total de enlaces usados dividido pelo número de
+enlaces. Como o algoritmo não conhece a rede, as cliques são obtidas de forma
+gulosa: enquanto existir uma aresta $vu$ ainda não coberta, criamos uma clique
+maximal que contém $v$ e $u$. Em seguida, escolhemos a subfamília de duas
+formas (acrescentando cliques enquanto $W/t$ cresce, ou retirando de todas as
+cliques as que contribuem menos que a média $W/t$) e ficamos com o melhor
+valor.
+
+O limite inferior da raiz é $\LB=\max\{1,q,\lceil W/t\rceil\}$.
+
+\subsection{Limite superior inicial}
+
+A solução inicial é dada pela heurística gulosa do primeiro trabalho
+(Algoritmo~\ref{alg:guloso}), que contrata um trabalhador (cor) por vez e dá a
+ele o maior número possível de tarefas compatíveis, percorrendo os vértices em
+ordem crescente de grau. Ela roda em $O(n\log n+cn+m)$.
+
+\begin{algorithm}[ht]
+  \caption{Guloso por classes de cor (Trabalho 1)}\label{alg:guloso}
+  \begin{algorithmic}[1]
+    \Require grafo $G=(V,E)$ e partição $\{V_1,\dots,V_k\}$
+    \Ensure representante $r_i$ e cor $f_i$ de cada grupo $V_i$
+    \State $L \gets$ vértices de $V$ em ordem crescente de $(\deg(v), v)$
+    \State $P \gets \{1,\dots,k\}$ \Comment{grupos pendentes}
+    \State $c \gets 0$
+    \While{$P \neq \emptyset$}
+      \State $c \gets c+1$; \quad $B \gets \emptyset$ \Comment{$B$: vizinhos da cor $c$}
+      \ForAll{$v \in L$}
+        \State $i \gets$ grupo de $v$
+        \If{$i \in P$ \textbf{e} $v \notin B$}
+          \State $r_i \gets v$; \quad $f_i \gets c$; \quad $P \gets P\setminus\{i\}$
+          \State $B \gets B \cup N(v)$
+        \EndIf
+      \EndFor
+    \EndWhile
+    \State \Return $(r, f)$
+  \end{algorithmic}
+\end{algorithm}
+
+Essa solução é melhorada pelo guloso iterado de \cite{culberson1996}, adaptado
+à seleção. A cada iteração, as classes de cor da solução atual são
+reordenadas (em ordem inversa, da maior para a menor ou aleatoriamente) e os
+grupos são recoloridos com \emph{first-fit} nessa ordem: cada grupo recebe a
+primeira cor em que algum dos seus vértices cabe, testando primeiro o
+representante atual. Com isso, o número de cores nunca aumenta: os grupos da
+$j$-ésima classe sempre cabem em uma das $j$ primeiras cores, pois cabiam
+juntos na cor $j$ antes. O guloso iterado para quando atinge $\LB$, quando
+passa 20.000 iterações seguidas sem reduzir o número de cores ou quando esgota
+5~s (ou 10\% do limite de tempo, se for menor).
+
+\subsection{Ramificação e quebra de simetria}\label{sec:ramificacao}
+
+A busca trabalha sobre a instância reduzida. Um nó da árvore é uma
+\emph{atribuição parcial}: alguns grupos já têm um par (representante, cor) e
+os demais estão pendentes. Para cada cor $c$ já aberta, mantemos o conjunto
+$B_c$ dos vizinhos dos vértices que estão na cor $c$; um vértice $v$ pode
+receber a cor $c$ se, e somente se, $v\notin B_c$. Seja $u$ o número de cores
+abertas e $\UB$ o valor da incumbente. Em cada nó:
+
+\begin{enumerate}
+  \item Para cada grupo pendente $V_i$, contamos as cores viáveis: as cores
+    $c<u$ com algum vértice de $V_i$ fora de $B_c$, mais uma cor nova se
+    $u+1<\UB$. Se algum grupo não tem nenhuma opção, o nó é podado.
+  \item O grupo ramificado é o mais restrito, isto é, o com menos cores
+    viáveis; no empate, fica o grupo com maior $\min_{v\in V_i}d_i(v)$, isto é,
+    aquele cujo vértice menos conflitante ainda conflita com mais vértices.
+    Um grupo com uma única opção é escolhido de imediato. Esse é o critério do
+    DSATUR \cite{brelaz1979}, aplicado a grupos.
+  \item Cada filho atribui ao grupo escolhido um par $(v,c)$ viável, com $v$
+    em ordem crescente de grau. Cores ainda não usadas são equivalentes entre
+    si, então só uma cor nova (a cor $u$) é tentada.
+\end{enumerate}
+
+A clique de grupos $Q=\{V_{g_0},\dots,V_{g_{q-1}}\}$ da raiz também quebra
+simetria: o grupo $V_{g_j}$ só pode receber a cor $j$, e a busca começa com
+$u=q$ cores abertas. Um ramo é podado quando $u\ge\UB$ (não pode melhorar a
+incumbente) ou quando $\UB\le\LB$ (a incumbente já é ótima). Ao chegar a uma
+folha (nenhum grupo pendente), a solução tem $u<\UB$ cores e passa a ser a
+incumbente.
+
+\begin{algorithm}[ht]
+  \caption{Busca do \emph{branch and bound}}\label{alg:bb}
+  \begin{algorithmic}[1]
+    \Procedure{Busca}{$u$, $R$} \Comment{$u$: cores abertas; $R$: grupos pendentes}
+      \If{$u \ge \UB$ \textbf{ou} $\UB \le \LB$} \Return \EndIf
+      \If{$R=\emptyset$}
+        \State incumbente $\gets$ atribuição atual; \quad $\UB \gets u$; \quad \Return
+      \EndIf
+      \ForAll{$V_i$ com $i\in R$}
+        \State $D_i \gets \{j\}$ se $V_i=V_{g_j}\in Q$; senão $D_i\gets\{0,\dots,u-1\}$
+        \State $C_i \gets \{c\in D_i : V_i\not\subseteq B_c\}$
+        \If{$V_i\notin Q$ \textbf{e} $u+1<\UB$} $C_i\gets C_i\cup\{u\}$ \EndIf
+        \If{$C_i=\emptyset$} \Return \Comment{poda por inviabilidade} \EndIf
+      \EndFor
+      \State $i \gets \arg\min_{i\in R}\,(|C_i|,\ -\min_{v\in V_i} d_i(v))$
+      \ForAll{$c\in C_i$ \textbf{e} $v\in V_i$ com $v\notin B_c$}
+        \State $r_i\gets v$; \quad $f_i\gets c$; \quad $B_c \gets B_c\cup N'(v)$
+        \State \Call{Busca}{$\max(u, c+1)$, $R\setminus\{i\}$}
+        \State desfaz a alteração em $B_c$
+      \EndFor
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+\subsection{Estratégias de busca}
+
+O mesmo procedimento \textsc{Busca} é usado de duas formas.
+\begin{itemize}
+  \item \emph{Descendente}: \textsc{Busca} é chamada uma vez, com $\UB$
+    igual ao valor da solução inicial; cada folha encontrada reduz $\UB$.
+    É o \emph{branch and bound} clássico, bom para melhorar a solução.
+  \item \emph{Ascendente}: para $t=\LB,\LB+1,\dots,\UB-1$, chamamos
+    \textsc{Busca} com $\UB$ temporariamente igual a $t+1$, o que só aceita
+    soluções com no máximo $t$ cores. Se a busca termina sem solução, está
+    provado que $\chiP(G)>t$, e $\LB$ passa a $t+1$; se encontra uma
+    solução, ela é ótima. É boa para provar limites inferiores.
+\end{itemize}
+A estratégia padrão, \emph{híbrida}, usa metade do tempo disponível na
+busca descendente e, se ela não terminar, o restante na ascendente. Sem limite
+de tempo, a busca descendente termina e a ascendente não é usada.
+
+\subsection{Implementação}
+
+O algoritmo foi implementado em Python~3, usando apenas a biblioteca padrão.
+Conjuntos de vértices ($N'(v)$, $B_c$, os grupos) são representados por
+inteiros usados como vetores de bits: o bit $v$ ligado indica que o vértice $v$
+está no conjunto. Assim, testar $v\notin B_c$ ou contar os vértices de $V_i$
+fora de $B_c$ são operações sobre inteiros, feitas em código nativo pelo
+interpretador. O código está organizado assim:
+\begin{itemize}
+  \item \texttt{exato.py}: redução por dominância, limites inferiores, guloso
+    iterado e o \emph{branch and bound};
+  \item \texttt{sgcp.py}: leitura das instâncias, heurística do primeiro
+    trabalho e validador, sem alterações em relação ao primeiro trabalho;
+  \item \texttt{main.py}: interface de terminal. Um menu permite escolher o
+    conjunto e depois a instância; a heurística e o \emph{branch and bound}
+    são executados e um relatório com os dados da instância, o número de cores,
+    o tempo e a validação de cada método, os limites inferior e superior, se o
+    ótimo foi provado e a melhor solução (representante e cor de cada grupo e
+    tarefas de cada trabalhador) com o seu valor é mostrado na tela e salvo em
+    \texttt{resultados/};
+  \item \texttt{experimentos.py}: executa os dois métodos em todas as
+    instâncias e gera as tabelas de resultados;
+  \item \texttt{testes.py}: testes automatizados, descritos na
+    Seção~\ref{sec:experimentos}.
+\end{itemize}
+Toda solução passa pelo validador antes de ser mostrada ou salva. Para
+executar, basta rodar, na pasta do projeto, \texttt{python main.py} (menu),
+\texttt{python main.py instancias/exemplo/toy.txt} (instância direta, com
+\texttt{--limite} para o tempo em segundos) ou \texttt{python experimentos.py}
+(todas as instâncias). Em alguns sistemas o comando é \texttt{python3}.
+
+% ---------------------------------------------------------------------------
+\section{Prova de correção}\label{sec:correcao}
+
+Escrevemos $\chiP$ para o valor ótimo da instância original.
+
+\begin{lema}\label{lem:dominancia}
+  A redução por dominância não altera o valor ótimo.
+\end{lema}
+
+\begin{proof}
+  Remover vértices não cria soluções novas, então o ótimo não diminui. Para
+  ver que ele não aumenta, seja $(S,f)$ uma solução e $v\in S\cap V_i$ um
+  vértice dominado por $u\in V_i$, isto é, $N'(u)\subseteq N'(v)$. Troque $v$
+  por $u$, mantendo a cor $f(v)$. Todo vizinho de $u$ na nova seleção pertence
+  a $N'(u)\subseteq N'(v)$ e, portanto, já era vizinho de $v$, com cor
+  diferente de $f(v)$. A nova solução é própria e usa o mesmo número de cores.
+  Repetindo a troca, obtemos uma solução com o mesmo número de cores que só
+  usa vértices não dominados (a relação de dominância é acíclica graças ao
+  desempate pelo menor índice). Removido $v$, as arestas que chegam a ele não
+  aparecem em nenhuma seleção da instância reduzida, então apagá-las preserva
+  o conjunto de soluções; as rodadas seguintes aplicam o mesmo argumento à
+  instância reduzida.
+\end{proof}
+
+\begin{lema}\label{lem:clique}
+  Se $Q$ é uma clique de $H$ com $q$ grupos, então $\chiP\ge q$.
+\end{lema}
+
+\begin{proof}
+  Para quaisquer dois grupos de $Q$, todo vértice de um é adjacente a todo
+  vértice do outro, em particular os seus representantes. Logo, os $q$
+  representantes formam uma clique em $G[S]$, para toda seleção $S$, e
+  precisam de $q$ cores distintas.
+\end{proof}
+
+\begin{lema}\label{lem:cobertura}
+  Para toda família de $t\ge1$ cliques de $G$, $\chiP\ge\lceil W/t\rceil$.
+\end{lema}
+
+\begin{proof}
+  Seja $(S,f)$ uma solução ótima. Cada classe de cor $f^{-1}(c)$ é um
+  conjunto independente, logo contém no máximo um vértice de cada clique
+  $Q_j$; assim, $\sum_{v\in f^{-1}(c)}w(v)\le t$. Somando sobre as $\chiP$
+  classes, $\sum_{v\in S}w(v)\le t\,\chiP$. Por outro lado, $S$ tem um vértice
+  de cada grupo, então $\sum_{v\in S}w(v)\ge\sum_i\min_{v\in V_i}w(v)=W$.
+  Daí $\chiP\ge W/t$ e, como $\chiP$ é inteiro, $\chiP\ge\lceil W/t\rceil$.
+\end{proof}
+
+\begin{lema}\label{lem:caminho}
+  Considere uma chamada de \textsc{Busca} com valor $\UB$ e suponha que exista
+  uma solução da instância reduzida com $c^\star<\UB$ cores. Então a busca
+  encontra uma solução com no máximo $c^\star$ cores, a menos que antes disso
+  $\UB$ caia para um valor $\le c^\star$ ou para $\LB$.
+\end{lema}
+
+\begin{proof}
+  Seja $(S,f)$ essa solução. Como os grupos de $Q$ estão em uma clique, eles
+  têm cores distintas em $f$; renomeando as cores, podemos supor que
+  $V_{g_j}$ tem a cor $j$. Construímos um caminho da raiz até uma folha que
+  ``segue'' $(S,f)$, mantendo um mapeamento injetivo $\pi$ das cores de $f$
+  para as cores da busca, com $\pi(j)=j$ para $j<q$. Em cada nó, seja $V_i$ o
+  grupo escolhido e $v$ o seu representante em $S$. Se $f(v)$ já está
+  mapeada, tomamos o filho $(v,\pi(f(v)))$; caso contrário, $V_i\notin Q$ e
+  tomamos o filho $(v,u)$, a cor nova, fazendo $\pi(f(v))=u$. Por
+  construção, a cor $\pi(f(v))$ da busca só contém vértices de $S$ com cor
+  $f(v)$, que não são vizinhos de $v$; logo $v\notin B_{\pi(f(v))}$ e o par é
+  viável. O número de cores abertas no caminho é o número de cores de $f$
+  mapeadas, no máximo $c^\star$. Assim, as podas não atingem o caminho: a poda
+  por $u\ge\UB$ exigiria $c^\star\ge\UB$; a cor nova é oferecida porque
+  $u+1\le c^\star<\UB$; e nenhum grupo fica sem opção, pois o par seguido por
+  $(S,f)$ continua viável. A busca em profundidade percorre todos os filhos
+  não podados, então chega à folha desse caminho, que tem no máximo $c^\star$
+  cores, ou antes disso reduz $\UB$ para no máximo $c^\star$ ou para $\LB$.
+\end{proof}
+
+\begin{teorema}\label{teo:correcao}
+  Sem limite de tempo, o algoritmo termina e devolve uma solução viável com
+  $\chiP$ cores. Com limite de tempo, ele devolve uma solução viável com $\UB$
+  cores e um valor $\LB$ tais que $\LB\le\chiP\le\UB$.
+\end{teorema}
+
+\begin{proof}
+  \emph{Viabilidade}: a incumbente inicial vem da heurística e do guloso
+  iterado, que só produzem colorações próprias; as folhas da busca também,
+  porque um par $(v,c)$ só é usado se $v\notin B_c$. Toda solução ainda é
+  conferida pelo validador. Logo $\UB\ge\chiP$ em todo momento.
+
+  \emph{Terminação}: a árvore tem profundidade $k$ (cada nível atende um
+  grupo) e cada nó tem no máximo $s\cdot(u+1)$ filhos, então é finita.
+
+  \emph{Limite inferior}: pelos Lemas~\ref{lem:dominancia},
+  \ref{lem:clique} e~\ref{lem:cobertura}, o $\LB$ da raiz é um limite
+  inferior para $\chiP$. Na estratégia ascendente, $\LB$ só passa a $t+1$
+  quando a busca com $\UB=t+1$ termina sem solução; pelo
+  Lema~\ref{lem:caminho} com $c^\star\le t$, isso só ocorre se não existe
+  solução com no máximo $t$ cores, isto é, se $\chiP>t$.
+
+  \emph{Otimalidade}: na busca descendente sem limite de tempo, suponha que
+  ela termine com $\UB>\chiP$. Pelo Lema~\ref{lem:dominancia}, existe solução
+  ótima da instância reduzida com $c^\star=\chiP<\UB$ cores, e pelo
+  Lema~\ref{lem:caminho} a busca teria encontrado uma solução com no máximo
+  $\chiP$ cores ou reduzido $\UB$ para $\LB\le\chiP$, uma contradição. Na
+  ascendente, a primeira meta $t$ com solução é ótima, pois $t-1$ já foi
+  refutada (ou $t=\LB$). Por fim, a poda por $\UB\le\LB$ só é aplicada
+  quando a incumbente já é ótima.
+\end{proof}
+
+A correção também foi conferida experimentalmente: os testes automatizados
+comparam o resultado do algoritmo com uma força bruta em 300 instâncias
+aleatórias pequenas e verificam, em instâncias da literatura com o tempo
+esgotando no meio da busca, que $\LB\le\chiP\le\UB$ para o valor ótimo
+publicado.
+
+% ---------------------------------------------------------------------------
+\section{Análise de complexidade}\label{sec:analise}
+
+Seja $w$ o tamanho da palavra de máquina, de modo que uma operação sobre um
+vetor de $n$ bits custa $O(\lceil n/w\rceil)$, e seja $c\le k$ o número de
+cores abertas.
+
+\paragraph{Pré-processamento.} Cada rodada da redução por dominância compara
+os pares de vértices de cada grupo, com custo
+$O(\sum_i|V_i|^2\cdot n/w)\subseteq O(sn^2/w)$, e há no máximo $n$ rodadas,
+pois cada rodada que continua remove pelo menos um vértice. A construção de
+$H$ custa $O(k^2 s\cdot n/w)$, e a busca da clique de grupos é limitada a
+$2\cdot10^5$ nós. A cobertura gulosa por cliques cria no máximo $m$ cliques,
+cada uma em $O(n^2/w)$, e a escolha da família custa $O(m^2 s)$ por rodada.
+A heurística do Trabalho 1 custa $O(n\log n+cn+m)$, e cada iteração do guloso
+iterado, $O(k\,s\,c\cdot n/w)$. Todo o pré-processamento é polinomial.
+
+\paragraph{Custo por nó.} A escolha do grupo percorre os grupos pendentes e,
+para cada um, as cores abertas, contando bits: $O(k\,c\cdot n/w)$. A geração
+dos filhos custa $O(s\,c)$, e cada filho atualiza um único $B_c$ em
+$O(n/w)$. O custo por nó é, portanto, $O(k\,c\cdot n/w)$.
+
+\paragraph{Número de nós.} Cada folha corresponde a uma seleção e a uma
+partição dos $k$ grupos em classes de cor rotuladas em ordem canônica (a cor
+nova é sempre a de menor índice livre, e as cores da clique $Q$ são fixas).
+Assim, há no máximo $\prod_i|V_i|\cdot \mathcal{B}_k$ folhas, onde
+$\mathcal{B}_k$ é o número de Bell (o número de partições de um conjunto de
+$k$ elementos), e no máximo $k$ vezes isso de nós, pois a profundidade é $k$.
+O tempo de pior caso é
+\[
+  O\Big(\prod_{i=1}^{k}|V_i|\cdot \mathcal{B}_k\cdot k^2 c\cdot \frac{n}{w}\Big),
+\]
+exponencial em $k$, como esperado para um problema NP-difícil. A quebra de
+simetria evita o fator $c^k$ (ou $k!$) de uma enumeração que trata as cores
+como distinguíveis. O limite acima é de pior caso: as podas por limite e por
+inviabilidade descartam subárvores inteiras, e quando $\LB=\UB$ na raiz nenhum
+nó é explorado.
+
+\paragraph{Memória.} A instância usa $O(n+m)$; a busca guarda a atribuição
+parcial e os conjuntos $B_c$, em $O(k+c\cdot n/w)$, e a pilha de recursão tem
+profundidade $k$. Cada nível guarda a lista de filhos, com $O(s\,c)$ pares,
+somando $O(k\,s\,c)$.
+
+% ---------------------------------------------------------------------------
+\section{Experimentos}\label{sec:experimentos}
+
+\subsection{Instâncias}
+
+Usamos as mesmas instâncias do primeiro trabalho: o banco clássico do PCP,
+distribuído pelo grupo de C. C. Ribeiro e mantido no repositório de
+\cite{santini2017}, que acompanha \cite{furini2018}. A
+Tabela~\ref{tab:instancias} resume os três conjuntos.
+
+\begin{itemize}
+  \item random \cite{frota2010}: grafos aleatórios com grupos de dois
+    vértices. Há um conjunto com densidade 0,5 e $n$ de 20 a 120, e outro com
+    $n=90$ e densidade de 0,1 a 0,9, com cinco instâncias por combinação.
+  \item nsfnet \cite{li2000}: roteamento na rede NSF (14 nós e 21 enlaces).
+    Cada conexão pedida com probabilidade $p\in\{0{,}1,\dots,1{,}0\}$ gera um
+    grupo com até duas rotas, e duas rotas são adjacentes quando compartilham
+    um enlace.
+  \item ring \cite{frota2010}: o mesmo processo em redes em anel com 10, 15 e
+    20 nós. Os cinco arquivos \texttt{ring\_n\{10,15,20\}p1.0s\{1..5\}} de cada
+    tamanho são cópias idênticas, como notam \cite{furini2018}; eles foram
+    mantidos para preservar os nomes originais.
+\end{itemize}
+
+\begin{table}[ht]
+  \centering
+  \caption{Conjuntos de instâncias usados nos experimentos.}
+  \label{tab:instancias}
+  \begin{tabular}{lrcccl}
+    \toprule
+    Conjunto & Arquivos & $n$ & $k$ & Densidade & Origem \\
+    \midrule
+    random & 80  & 20--120 & 10--60  & 0,10--0,91 & \cite{frota2010} \\
+    nsfnet & 50  & 16--257 & 12--182 & 0,09--0,13 & \cite{li2000} \\
+    ring   & 150 & 8--760  & 4--380  & 0,36--0,41 & \cite{frota2010} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+As instâncias chegam a 760 vértices e 117 mil arestas, tamanho suficiente para
+que nenhuma enumeração completa seja viável, por isso não foi preciso criar um
+gerador. Elas também permitem comparar os resultados com os valores ótimos
+publicados. O código, as instâncias e os resultados deste trabalho estão em
+\url{https://github.com/Cabetoln/trab2paa}; os do primeiro trabalho, em
+\url{https://github.com/pondof/trab1PAA}. As instâncias originais e o código
+de \cite{furini2018} estão em
+\url{https://github.com/alberto-santini/selective-graph-colouring}.
+
+\subsection{Metodologia}
+
+Os experimentos foram executados em um computador com processador Apple M2
+Pro (6 núcleos de desempenho e 4 de eficiência), 16~GB de memória e macOS~26,
+usando CPython~3.14.3. O \emph{branch and bound} usou a estratégia híbrida e
+um limite de 60~s por instância, contado desde o início do pré-processamento,
+de modo que o tempo do guloso iterado entra no total. Para encurtar a
+execução, seis instâncias rodaram ao mesmo tempo, cada uma em um processo
+próprio com uma única \emph{thread}. A heurística do primeiro trabalho foi
+executada na mesma rodada, na mesma máquina. Os tempos foram medidos com
+\texttt{time.perf\_counter} e não incluem a leitura do arquivo.
+
+O limite de 60~s foi escolhido para que o experimento completo, com 280
+instâncias, possa ser repetido por um leitor em menos de meia hora com seis
+processos (ou em cerca de 2,6~h com um só), e é também o padrão da interface
+\texttt{main.py}, que qualquer pessoa pode usar para testar uma instância. Esse
+valor é baixo perto do que a literatura usa: os métodos exatos de
+\cite{furini2018} chegam a uma hora por instância. Os ótimos provados
+mostram, portanto, o que o algoritmo resolve em um minuto; como ele é exato e
+sempre termina, com mais tempo ele pode provar o ótimo de outras instâncias.
+Nas instâncias resolvidas, o maior tempo foi de 27~s, bem abaixo do limite; nas demais, o algoritmo informa o intervalo
+$[\LB,\UB]$ em que o ótimo está, e qualquer limite pode ser escolhido com a
+opção \texttt{--limite}.
+
+Os dois métodos são determinísticos: o guloso iterado usa um gerador
+pseudoaleatório com semente fixa. A única fonte de variação entre execuções é
+o limite de tempo, pois uma máquina mais lenta explora menos nós em 60~s e
+pode terminar com limites piores. Para reproduzir as tabelas, basta rodar
+\texttt{python experimentos.py --limite 60 --processos 6} na pasta do projeto;
+o resultado de cada instância vai para \texttt{resultados/bb.csv} e as
+tabelas, para \texttt{resultados/tabela\_bb.md}. Todas as soluções das 280
+instâncias passaram pelo validador.
+
+A correção da implementação também foi testada com \texttt{python -m unittest
+testes}. O teste principal gera 300 instâncias aleatórias pequenas (até 7
+grupos de até 3 vértices) e compara o valor do algoritmo com o de uma força
+bruta que enumera todas as seleções e colorações. Outro teste interrompe a
+busca após 2~s em cinco instâncias difíceis e confere, para as três
+estratégias, que $\LB\le\chiP\le\UB$ para o valor ótimo publicado.
+
+Os valores de referência são os mesmos do primeiro trabalho, retirados das
+Tabelas~2 e~3 de \cite{furini2018}. Eles cobrem 187 dos 280 arquivos. Em 180
+deles o valor é ótimo comprovado; nos outros 7 (\texttt{n90p2t2s4},
+\texttt{n90p3t2s4} e as cinco cópias de \texttt{ring\_n20p1.0s1}) é o melhor
+valor conhecido. O gap de um método é $100\cdot(c-c^*)/c^*$, onde $c$ é o
+número de cores do método e $c^*$ é o valor de referência.
+
+\subsection{Resultados}
+
+A Tabela~\ref{tab:resumo} compara o \emph{branch and bound} (B\&B) com a
+heurística do primeiro trabalho (T1) em cada conjunto. As médias de cores e de
+tempo são sobre todas as instâncias; os gaps, sobre as instâncias com
+referência. A coluna ``Ótimo provado'' conta as instâncias em que o
+algoritmo terminou com $\LB=\UB$, e entre parênteses quantas delas foram
+resolvidas já na raiz, sem explorar nenhum nó.
+
+\begin{table}[ht]
+  \centering
+  \caption{Resumo por conjunto: heurística do Trabalho 1 (T1) e
+    \emph{branch and bound} (B\&B) com limite de 60~s.}
+  \label{tab:resumo}
+  \footnotesize\setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lrrrrrrrrrr}
+    \toprule
+    & & Ótimo & \multicolumn{3}{c}{Cores (média)} & \multicolumn{2}{c}{Tempo médio} & Com & \multicolumn{2}{c}{Gap médio (\%)} \\
+    \cmidrule(lr){4-6}\cmidrule(lr){7-8}\cmidrule(lr){10-11}
+    Conjunto & Inst. & provado & T1 & B\&B & $\LB$ & T1 (ms) & B\&B (s) & ref. & T1 & B\&B \\
+    \midrule
+    nsfnet & 50  & 25 (24) & 9,66  & 8,08  & 7,52  & 0,17 & 30,0 & 32 & 19,17 & 0,00 \\
+    random & 80  & 54 (1)  & 9,74  & 7,00  & 6,54  & 0,10 & 23,5 & 56 & 43,30 & 2,37 \\
+    ring   & 150 & 48 (40) & 22,70 & 19,73 & 18,08 & 0,71 & 41,1 & 99 & 18,83 & 2,35 \\
+    \midrule
+    total  & 280 & 127 (65) & & & & & & 187 & & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:grupos} detalha os resultados por grupo de instâncias. Além
+das cores da heurística e do B\&B, ela mostra o limite superior inicial
+($\UB_0$, depois do guloso iterado) e o limite inferior final ($\LB$). A
+coluna ``Ref.'' traz o número de instâncias do grupo com valor de referência
+e, entre parênteses, em quantas delas o B\&B chegou a esse valor. A tabela
+completa, instância por instância, está em \texttt{resultados/tabela\_bb.md}.
+
+\begin{table}[ht]
+  \centering
+  \caption{Resultados por grupo de instâncias: médias de $n$, das cores da
+    heurística (T1), do limite superior inicial ($\UB_0$), do B\&B e do
+    limite inferior final ($\LB$), e tempo médio do B\&B.}
+  \label{tab:grupos}
+  \footnotesize\setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{llrrrrrrrrr}
+    \toprule
+    Conjunto & Grupo & Inst. & $n$ & Ótimo & T1 & $\UB_0$ & B\&B & $\LB$ & Ref. & Tempo (s) \\
+    \midrule
+    random & $n=20$,  $p=0{,}5$ & 5 & 20  & 5 & 3,4  & 3,0  & 3,0  & 3,0  & 0     & 0,09 \\
+           & $n=40$,  $p=0{,}5$ & 5 & 40  & 5 & 6,0  & 4,0  & 4,0  & 4,0  & 0     & 0,28 \\
+           & $n=60$,  $p=0{,}5$ & 5 & 60  & 5 & 7,6  & 5,6  & 5,0  & 5,0  & 1 (1) & 0,53 \\
+           & $n=70$,  $p=0{,}5$ & 5 & 70  & 5 & 8,4  & 6,0  & 6,0  & 6,0  & 3 (3) & 1,10 \\
+           & $n=80$,  $p=0{,}5$ & 5 & 80  & 5 & 9,2  & 7,0  & 6,0  & 6,0  & 5 (5) & 5,63 \\
+           & $n=90$,  $p=0{,}5$ & 5 & 90  & 4 & 9,6  & 7,4  & 7,0  & 6,8  & 5 (5) & 28,22 \\
+           & $n=100$, $p=0{,}5$ & 5 & 100 & 2 & 10,4 & 8,0  & 7,4  & 6,8  & 5 (3) & 44,59 \\
+           & $n=120$, $p=0{,}5$ & 5 & 120 & 0 & 12,0 & 9,0  & 9,0  & 7,0  & 5 (0) & 60,00 \\
+           & $n=90$,  $p=0{,}1$ & 5 & 90  & 5 & 3,6  & 3,0  & 2,8  & 2,8  & 5 (5) & 0,59 \\
+           & $n=90$,  $p=0{,}2$ & 5 & 90  & 5 & 5,2  & 4,0  & 3,8  & 3,8  & 5 (5) & 1,14 \\
+           & $n=90$,  $p=0{,}3$ & 5 & 90  & 5 & 7,0  & 5,0  & 5,0  & 5,0  & 5 (5) & 5,14 \\
+           & $n=90$,  $p=0{,}4$ & 5 & 90  & 5 & 8,8  & 6,0  & 5,8  & 5,8  & 5 (5) & 11,84 \\
+           & $n=90$,  $p=0{,}6$ & 5 & 90  & 3 & 11,8 & 9,0  & 8,4  & 8,0  & 4 (3) & 36,13 \\
+           & $n=90$,  $p=0{,}7$ & 5 & 90  & 0 & 14,0 & 10,8 & 10,0 & 9,0  & 0     & 60,00 \\
+           & $n=90$,  $p=0{,}8$ & 5 & 90  & 0 & 17,4 & 13,0 & 12,4 & 11,2 & 4 (2) & 60,00 \\
+           & $n=90$,  $p=0{,}9$ & 5 & 90  & 0 & 21,4 & 16,8 & 16,4 & 14,4 & 4 (2) & 60,00 \\
+    \midrule
+    nsfnet & $p=0{,}1$ & 5 & 26  & 5 & 2,8  & 2,4  & 2,4  & 2,4  & 0     & 0,00 \\
+           & $p=0{,}2$ & 5 & 53  & 5 & 4,6  & 4,0  & 4,0  & 4,0  & 0     & 0,13 \\
+           & $p=0{,}3$ & 5 & 79  & 4 & 7,0  & 5,4  & 5,4  & 5,2  & 0     & 12,00 \\
+           & $p=0{,}4$ & 5 & 103 & 5 & 7,8  & 6,4  & 6,4  & 6,4  & 3 (3) & 0,00 \\
+           & $p=0{,}5$ & 5 & 125 & 1 & 9,2  & 7,4  & 7,4  & 6,6  & 4 (4) & 48,00 \\
+           & $p=0{,}6$ & 5 & 151 & 2 & 10,6 & 9,0  & 9,0  & 8,4  & 5 (5) & 36,01 \\
+           & $p=0{,}7$ & 5 & 181 & 2 & 12,2 & 10,2 & 10,2 & 9,6  & 5 (5) & 36,00 \\
+           & $p=0{,}8$ & 5 & 205 & 0 & 13,0 & 11,0 & 11,0 & 9,8  & 5 (5) & 60,00 \\
+           & $p=0{,}9$ & 5 & 225 & 1 & 14,2 & 12,0 & 12,0 & 11,2 & 5 (5) & 48,00 \\
+           & $p=1{,}0$ & 5 & 249 & 0 & 15,2 & 13,0 & 13,0 & 11,6 & 5 (5) & 60,00 \\
+    \midrule
+    ring   & 10 nós & 50 & 97  & 35 & 9,32  & 7,98  & 7,98  & 7,62  & 16 (16) & 18,71 \\
+           & 15 nós & 50 & 237 & 12 & 21,60 & 18,66 & 18,66 & 17,30 & 38 (23) & 45,65 \\
+           & 20 nós & 50 & 421 & 1  & 37,18 & 32,56 & 32,56 & 29,32 & 45 (17) & 58,81 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Para medir a distância entre a heurística do primeiro trabalho e o ótimo, a
+Tabela~\ref{tab:t1otimo} usa todas as instâncias com ótimo conhecido: as 127
+em que o B\&B provou o ótimo e as que têm ótimo comprovado na literatura,
+246 ao todo. No primeiro trabalho só era possível fazer essa comparação nas
+instâncias com referência; o B\&B acrescenta 66 instâncias a esse conjunto.
+
+\begin{table}[ht]
+  \centering
+  \caption{Número de instâncias com ótimo conhecido segundo a diferença, em
+    cores, entre a heurística do Trabalho 1 e o ótimo.}
+  \label{tab:t1otimo}
+  \small
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    Conjunto & 0 & 1 & 2 & 3 & $\ge4$ & Total \\
+    \midrule
+    nsfnet & 5  & 16 & 21 & 6  & 0  & 48  \\
+    random & 4  & 10 & 21 & 16 & 22 & 73  \\
+    ring   & 7  & 25 & 19 & 15 & 59 & 125 \\
+    \midrule
+    total  & 16 & 51 & 61 & 37 & 81 & 246 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Discussão}
+
+\paragraph{B\&B contra a heurística do Trabalho 1.} O B\&B usou menos cores
+que a heurística em 261 das 280 instâncias e empatou nas outras 19. Em média,
+a redução foi de 1,6 cor em nsfnet, 2,7 em random e 3,0 em ring, e o gap em
+relação à referência caiu de 19\% para 0\% em nsfnet, de 43\% para 2,4\% em
+random e de 19\% para 2,4\% em ring. A Tabela~\ref{tab:grupos} mostra de onde
+vem essa redução. Em nsfnet e ring, a busca em árvore não melhorou o limite
+superior em nenhuma instância: todo o ganho sobre a heurística vem do guloso
+iterado ($\UB_0$ igual à coluna B\&B), e a árvore serve para provar que essa
+solução é ótima. Em random, a busca melhorou o limite superior inicial em 28
+das 80 instâncias. A Tabela~\ref{tab:t1otimo} confirma o que o primeiro
+trabalho já indicava: a heurística sozinha atinge o ótimo em só 16 das 246
+instâncias com ótimo conhecido, quase todas pequenas, e fica 4 ou mais cores
+acima dele em 81, a maioria em ring.
+
+\paragraph{Limites inferiores.} Os dois conjuntos de redes ópticas se
+comportam de forma diferente do conjunto random. Em nsfnet e ring, o limite
+de cobertura por cliques (que nessas instâncias é o limite de carga dos
+enlaces) muitas vezes coincide com o ótimo, e 64 dos 73 ótimos provados
+nesses conjuntos saíram já na raiz, quase sempre em menos de 0,1~s; o limite
+inferior da raiz só aumentou durante a busca em 10 das 200 instâncias. Nas
+instâncias random, os grupos têm dois vértices sem estrutura, e o limite
+inferior da raiz fica pequeno (de 2 a 4 cores na maioria dos casos). Lá, 53
+dos 54 ótimos foram provados pela busca em árvore, e o limite inferior final
+ficou acima do da raiz em 78 das 80 instâncias, quase sempre graças à busca
+ascendente, que refuta $t=\LB,\LB+1,\dots$ cores uma a uma. Isso explica por que o tempo cresce rápido com $n$ e com a
+densidade em random: com $n=90$ e $p=0{,}5$ já são 28~s em média, e a partir
+de $n=120$ ou $p=0{,}7$ nenhuma instância foi resolvida em 60~s.
+
+\paragraph{Comparação com a literatura.} Nas 187 instâncias com referência, o
+B\&B chegou ao valor publicado em 132: todas as 32 de nsfnet, 44 de 56 em
+random e 56 de 99 em ring. Ele nunca encontrou menos cores que a referência,
+e o seu limite inferior nunca passou dela, o que é coerente com a correção
+dos dois limites. Quando não chegou, o B\&B ficou 1 cor acima em 32
+instâncias, 2 em 14 e de 3 a 5 cores em 9, todas em ring com 20 nós e
+$p\ge0{,}9$. O B\&B provou o ótimo de 63 dessas 187 instâncias em até 60~s,
+contra 180 com ótimo comprovado nas tabelas de \cite{furini2018}, cujos
+métodos exatos levam de segundos a uma hora por instância e usam relaxações
+lineares bem mais fortes que os nossos limites combinatórios. Em dois casos o
+B\&B foi além da referência: para \texttt{n90p2t2s4} e \texttt{n90p3t2s4}, as
+tabelas trazem 4 e 5 cores apenas como melhor valor conhecido, e o B\&B prova
+que esses valores são ótimos, em 2,0~s e 9,8~s. Ele também provou o ótimo de
+64 das 93 instâncias que não aparecem nas tabelas do artigo.
+
+\paragraph{Tempo.} A heurística do primeiro trabalho levou no máximo 3,8~ms
+por instância e 0,12~s para as 280. O B\&B é várias ordens de grandeza mais
+lento: somando todas as instâncias, foram 2,6~h de processamento, ou 27~min
+de tempo real com seis instâncias em paralelo. Esse tempo se concentra nas
+153 instâncias em que o ótimo não foi provado, que usam os 60~s inteiros e
+respondem por 2,55~h do total. Nas 127 com ótimo provado, a mediana do tempo foi de
+0,002~s em nsfnet, 0,016~s em ring e 1,05~s em random, e o maior tempo foi de
+27~s. Entre as instâncias resolvidas está \texttt{ring\_n15p0.6s3}, com 258
+vértices, provada em 0,07~s. Nas 153 instâncias não resolvidas, o B\&B termina
+com uma solução e um intervalo $[\LB,\UB]$; a diferença média é de 1,1 cor em
+nsfnet, 1,4 em random e 2,4 em ring.
+
+% ---------------------------------------------------------------------------
+\section{Conclusão}\label{sec:conclusao}
+
+Este trabalho apresentou um algoritmo exato do tipo \emph{branch and bound}
+para o Problema de Coloração Seletiva de Grafos. O algoritmo adapta ao
+problema a ramificação do DSATUR, quebra a simetria entre cores com uma
+clique de grupos, descarta vértices dominados e combina dois limites
+inferiores combinatórios com um limite superior obtido pela heurística do
+primeiro trabalho e pelo guloso iterado. Provamos que ele devolve o ótimo
+quando termina e que, interrompido pelo limite de tempo, devolve uma solução
+viável e um limite inferior válido. A implementação usa apenas a biblioteca
+padrão do Python.
+
+Nas 280 instâncias da literatura, com 60~s por instância, o algoritmo provou
+o ótimo em 127 e chegou ao valor publicado em 132 das 187 instâncias com
+referência, incluindo todas as de nsfnet. Ele também provou a otimalidade de
+dois valores que a literatura trazia só como melhores conhecidos e de 64
+instâncias que não aparecem nas tabelas de \cite{furini2018}. Comparado com a
+heurística do primeiro trabalho, usou menos cores em 261 instâncias, e o gap
+médio caiu de 19\% (nsfnet e ring) e 43\% (random) para no máximo 2,4\%. O
+custo é o tempo: a heurística resolve todas as instâncias em 0,12~s, enquanto
+o B\&B usa os 60~s inteiros em 153 delas.
+
+As instâncias não resolvidas são as random com densidade a partir de 0,7 ou
+com $n\ge100$, nas quais
+os limites inferiores combinatórios ficam longe do ótimo, e as ring maiores,
+em que a árvore é grande demais para 60~s em Python. Como trabalhos futuros,
+sugerimos: (i) recalcular o limite de cobertura por cliques em cada nó,
+considerando só os grupos ainda pendentes, para podar mais cedo nas
+instâncias de redes ópticas; e (ii) usar a relaxação linear da formulação de
+cobertura, como em \cite{furini2018}, como limite inferior nas instâncias
+random, o que exigiria implementar um resolvedor de programação linear sem
+bibliotecas externas.
+
+\bibliographystyle{sbc}
+\bibliography{referencias}
+
+\end{document}

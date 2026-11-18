@@ -13,7 +13,7 @@ arestas ligam tarefas no mesmo horário e as cores são trabalhadores.
 
 ## Requisitos
 
-Python 3.9 ou mais recente (testado na 3.12). Só a biblioteca padrão é usada:
+Python 3.9 ou mais recente (testado nas versões 3.12 e 3.14). Só a biblioteca padrão é usada:
 não há nada para instalar. Os comandos abaixo são executados na pasta do projeto.
 No Linux/macOS, use `python3` no lugar de `python`.
 
@@ -60,7 +60,8 @@ Implementado em `exato.py` (`branch_and_bound`).
      redes ópticas, as cliques são os enlaces e este é o limite de carga.
 3. **Limite superior inicial.** Heurística gulosa do Trabalho 1, melhorada pelo
    guloso iterado de Culberson (reordena as classes de cor e recolore com first-fit,
-   o que nunca aumenta o número de cores).
+   o que nunca aumenta o número de cores). Ele para ao atingir o limite inferior,
+   após 20000 iterações seguidas sem melhora ou após 5 s (no máximo 10% do limite).
 4. **Branch and bound (estilo DSATUR).** Cada nó atribui um par (vértice, cor) a um
    grupo ainda não atendido. O grupo escolhido é o que tem menos cores viáveis
    (desempate: maior grau). Só uma cor nova é aberta por nó, pois cores ainda não
@@ -88,6 +89,7 @@ maior limite inferior provado, e informa que o ótimo não foi provado.
 | `testes.py` | testes (`unittest`): toy, 300 instâncias aleatórias contra força bruta, limites com tempo curto |
 | `instancias/` | casos de teste: `exemplo/` (toy), `random/` (80), `nsfnet/` (50), `ring/` (150) |
 | `resultados/` | relatórios e tabelas gerados |
+| `relatorio/` | relatório em LaTeX (modelo da SBC): `relatorio.tex` e `referencias.bib` |
 
 ## Instâncias
 

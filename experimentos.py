@@ -17,6 +17,7 @@ import argparse
 import csv
 import platform
 import sys
+import time
 from datetime import datetime
 from multiprocessing import Pool
 from pathlib import Path
@@ -27,7 +28,7 @@ from exato import branch_and_bound
 REFERENCIAS = Path('instancias', 'referencias.csv')
 CSV_SAIDA = Path('resultados', 'bb.csv')
 MD_SAIDA = Path('resultados', 'tabela_bb.md')
-COLUNAS = ['conjunto', 'instância', 'n', 'm', 'k', 'densidade', 'cores_t1', 'ub_inicial',
+COLUNAS = ['conjunto', 'instância', 'n', 'm', 'k', 'densidade', 'cores_t1', 't1_ms', 'ub_inicial',
            'lb_raiz', 'lb', 'cores_bb', 'ótimo', 'nós', 'tempo_s', 'válido',
            'literatura', 'lit_ótimo', 'gap_bb', 'gap_t1']
 AVISO_RING = ('Em ring, os arquivos ring_n{10,15,20}p1.0s{1..5} são cinco cópias idênticas de três '
@@ -48,14 +49,16 @@ def rodar(tarefa):
     """Roda uma instância (executado em um processo separado quando --processos > 1)."""
     conjunto, caminho, limite, estrategia, ref = tarefa
     inst = ler_instancia(caminho)
+    inicio = time.perf_counter()
     reps_h, cores_h = guloso_classes(inst)
+    t1_ms = (time.perf_counter() - inicio) * 1000
     r = branch_and_bound(inst, limite, estrategia)
     valido = not validar(inst, r['representantes'], r['cores']) and not validar(inst, reps_h, cores_h)
     n, m = inst['n'], inst['m']
     cores_t1 = len(set(cores_h[1:]))
     linha = {'conjunto': conjunto, 'instância': inst['nome'], 'n': n, 'm': m, 'k': inst['k'],
              'densidade': f'{2 * m / (n * (n - 1)):.4f}' if n > 1 else '0',
-             'cores_t1': cores_t1, 'ub_inicial': r['ub_inicial'], 'lb_raiz': r['lb_raiz'],
+             'cores_t1': cores_t1, 't1_ms': f'{t1_ms:.3f}', 'ub_inicial': r['ub_inicial'], 'lb_raiz': r['lb_raiz'],
              'lb': r['lb'], 'cores_bb': r['n_cores'], 'ótimo': 'sim' if r['otimo'] else 'não',
              'nós': r['nos'], 'tempo_s': f'{r["tempo_ms"] / 1000:.3f}',
              'válido': 'sim' if valido else 'não',
@@ -119,7 +122,7 @@ def salvar_md(linhas, args):
         f'processos em paralelo: {args.processos}.',
         f'- Plataforma: Python {platform.python_version()}, {platform.system()} {platform.release()}, '
         f'{platform.processor() or platform.machine()}.',
-        '- T1 = heurística gulosa do Trabalho 1 (`guloso_classes`).',
+        '- T1 = heurística gulosa do Trabalho 1 (`guloso_classes`); t1_ms = tempo dela em ms.',
         '- ub_inicial = UB após o guloso iterado; lb_raiz = maior limite inferior da raiz '
         '(clique de grupos e cobertura por cliques).',
         '- lb / cores_bb = limites inferior e superior ao fim do B&B; ótimo = `sim` quando '

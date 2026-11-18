@@ -265,7 +265,7 @@ def _familia_reversa(k, verts, grupo_de, familia, n):
     return melhor
 
 
-def guloso_iterado(k, verts, adjm, reps, cores, limite_s, lb=1, semente=0):
+def guloso_iterado(k, verts, adjm, reps, cores, limite_s, lb=1, semente=0, max_sem_melhora=20000):
     """Melhora uma solução com o guloso iterado de Culberson adaptado à seleção.
 
     A cada iteração, as classes de cor da solução atual são reordenadas (inversa,
@@ -274,16 +274,18 @@ def guloso_iterado(k, verts, adjm, reps, cores, limite_s, lb=1, semente=0):
     grupo; com isso o número de cores nunca aumenta (argumento de Culberson: os grupos
     da j-ésima classe sempre cabem em uma das j primeiras cores).
 
+    Para quando atinge lb, quando passam max_sem_melhora iterações seguidas sem reduzir
+    o número de cores ou quando esgota limite_s segundos, o que vier primeiro.
     reps e cores seguem o formato do Trabalho 1 (k+1 posições, cores a partir de 1).
-    Devolve (reps, cores) da melhor solução encontrada dentro de limite_s segundos.
+    Devolve (reps, cores) da melhor solução encontrada.
     """
     import random
     rng = random.Random(semente)
     fim = time.perf_counter() + limite_s
     reps, cores = list(reps), list(cores)
     melhor = max(cores[1:])
-    it = 0
-    while time.perf_counter() < fim and melhor > lb:
+    it = sem_melhora = 0
+    while time.perf_counter() < fim and melhor > lb and sem_melhora < max_sem_melhora:
         it += 1
         classes = {}
         for g in range(1, k + 1):
@@ -318,7 +320,10 @@ def guloso_iterado(k, verts, adjm, reps, cores, limite_s, lb=1, semente=0):
                     bloq.append(adjm[atual])
                     novos_reps[g], novas_cores[g] = atual, len(bloq)
         reps, cores = novos_reps, novas_cores
-        melhor = min(melhor, len(bloq))
+        if len(bloq) < melhor:
+            melhor, sem_melhora = len(bloq), 0
+        else:
+            sem_melhora += 1
     return reps, cores
 
 
